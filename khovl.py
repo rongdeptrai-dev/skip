@@ -1,18 +1,306 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-TikTok Bot - Cải thiện hiệu quả skip
+TikTok Bot - Cải thiện hiệu quả skip với Eye Movement Extension
+Enhanced with realistic eye movement animations for background overlay
 """
 
 import os
 import time
 import logging
-import cv2
-import numpy as np
-import subprocess
 import json
-from typing import List, Optional
+import math
+import threading
+from typing import List, Optional, Tuple
 import random
+
+# Try to import advanced libraries, fallback to basic implementation
+try:
+    import cv2
+    import numpy as np
+    CV2_AVAILABLE = True
+except ImportError:
+    CV2_AVAILABLE = False
+    print("⚠️ OpenCV không khả dụng - sử dụng implementation cơ bản")
+
+try:
+    import subprocess
+    SUBPROCESS_AVAILABLE = True
+except ImportError:
+    SUBPROCESS_AVAILABLE = False
+
+class RealisticEyeMovement:
+    """
+    Hệ thống chuyển động mắt chân thật cho background extension
+    Tạo chuyển động mắt mượt mà và tự nhiên
+    """
+    
+    def __init__(self):
+        print("👁️ Khởi tạo Realistic Eye Movement System...")
+        
+        # Cấu hình chuyển động mắt
+        self.eye_config = {
+            "movement_smoothness": 0.08,    # Độ mượt chuyển động (0.01-0.5)
+            "pupil_dilation_base": 1.0,     # Kích thước đồng tử cơ bản  
+            "blink_frequency": 3.5,         # Tần số nháy mắt (giây)
+            "micro_movement_range": 0.15,   # Phạm vi chuyển động nhỏ tự nhiên
+            "saccade_speed": 0.25,          # Tốc độ di chuyển nhanh
+            "natural_drift": 0.03,          # Trôi chậm tự nhiên
+            "focus_tracking": True,         # Theo dõi tiêu điểm
+            "realistic_physics": True,      # Áp dụng vật lý chân thật
+        }
+        
+        # Trạng thái hiện tại của mắt
+        self.current_state = {
+            "gaze_x": 0.0,           # Hướng nhìn X (-1 đến 1)
+            "gaze_y": 0.0,           # Hướng nhìn Y (-1 đến 1)
+            "target_x": 0.0,         # Mục tiêu X
+            "target_y": 0.0,         # Mục tiêu Y
+            "pupil_dilation": 1.0,   # Độ giãn đồng tử (0.5-1.8)
+            "blink_state": 1.0,      # Trạng thái nháy mắt (0=đóng, 1=mở)
+            "attention_level": 1.0,   # Mức độ tập trung (0-1)
+            "fatigue_level": 0.0,    # Mức độ mệt mỏi (0-1)
+        }
+        
+        # Timing controls
+        self.timing = {
+            "last_blink": time.time(),
+            "last_micro_movement": time.time(),
+            "last_gaze_change": time.time(),
+            "last_attention_change": time.time(),
+        }
+        
+        # Animation state
+        self.is_active = False
+        self.is_blinking = False
+        
+        # Statistics
+        self.stats = {
+            "total_blinks": 0,
+            "gaze_changes": 0,
+            "smooth_movements": 0,
+            "session_start": time.time()
+        }
+        
+        print("✅ Eye Movement System initialized")
+    
+    def calculate_natural_blink_interval(self):
+        """Tính toán khoảng thời gian nháy mắt tự nhiên"""
+        base_interval = self.eye_config["blink_frequency"]
+        
+        # Điều chỉnh dựa trên mức độ mệt mỏi
+        fatigue_factor = 1 - (self.current_state["fatigue_level"] * 0.3)
+        
+        # Điều chỉnh dựa trên mức độ tập trung
+        attention_factor = 0.8 + (self.current_state["attention_level"] * 0.4)
+        
+        # Thêm random variation
+        random_factor = random.uniform(0.7, 1.3)
+        
+        return base_interval * fatigue_factor * attention_factor * random_factor
+    
+    def generate_smooth_movement(self):
+        """Tạo chuyển động mắt mượt mà và tự nhiên"""
+        current_time = time.time()
+        
+        # Smooth interpolation to target
+        smoothness = self.eye_config["movement_smoothness"]
+        
+        # Apply realistic physics - không di chuyển quá nhanh
+        max_change_per_frame = 0.05
+        
+        # Calculate movement towards target
+        dx = self.current_state["target_x"] - self.current_state["gaze_x"]
+        dy = self.current_state["target_y"] - self.current_state["gaze_y"]
+        
+        # Limit movement speed for realism
+        movement_x = max(-max_change_per_frame, min(max_change_per_frame, dx * smoothness))
+        movement_y = max(-max_change_per_frame, min(max_change_per_frame, dy * smoothness))
+        
+        # Apply movement
+        self.current_state["gaze_x"] += movement_x
+        self.current_state["gaze_y"] += movement_y
+        
+        # Add micro movements for realism
+        if current_time - self.timing["last_micro_movement"] > 0.8:
+            micro_range = self.eye_config["micro_movement_range"]
+            micro_x = random.uniform(-micro_range, micro_range) * 0.3
+            micro_y = random.uniform(-micro_range, micro_range) * 0.3
+            
+            self.current_state["target_x"] += micro_x
+            self.current_state["target_y"] += micro_y
+            
+            # Keep within bounds
+            self.current_state["target_x"] = max(-1, min(1, self.current_state["target_x"]))
+            self.current_state["target_y"] = max(-1, min(1, self.current_state["target_y"]))
+            
+            self.timing["last_micro_movement"] = current_time
+            self.stats["smooth_movements"] += 1
+    
+    def update_pupil_dilation(self):
+        """Cập nhật độ giãn đồng tử dựa trên các yếu tố tự nhiên"""
+        # Base dilation
+        base = self.eye_config["pupil_dilation_base"]
+        
+        # Attention affects pupil size
+        attention_effect = self.current_state["attention_level"] * 0.3
+        
+        # Fatigue affects pupil size  
+        fatigue_effect = self.current_state["fatigue_level"] * 0.2
+        
+        # Random variation for realism
+        random_variation = random.uniform(-0.05, 0.05)
+        
+        # Calculate new dilation
+        new_dilation = base + attention_effect - fatigue_effect + random_variation
+        
+        # Smooth transition
+        current_dilation = self.current_state["pupil_dilation"]
+        smooth_factor = 0.02
+        self.current_state["pupil_dilation"] = (
+            current_dilation * (1 - smooth_factor) + new_dilation * smooth_factor
+        )
+        
+        # Keep within realistic bounds
+        self.current_state["pupil_dilation"] = max(0.5, min(1.8, self.current_state["pupil_dilation"]))
+    
+    def trigger_natural_blink(self):
+        """Kích hoạt nháy mắt tự nhiên"""
+        if self.is_blinking:
+            return
+            
+        self.is_blinking = True
+        self.stats["total_blinks"] += 1
+        
+        def blink_animation():
+            """Animation nháy mắt mượt mà"""
+            blink_duration = 0.15  # 150ms
+            frames = 8
+            frame_time = blink_duration / frames
+            
+            # Close eyes
+            for i in range(frames // 2):
+                progress = i / (frames // 2)
+                self.current_state["blink_state"] = 1.0 - progress
+                time.sleep(frame_time)
+            
+            # Open eyes  
+            for i in range(frames // 2):
+                progress = i / (frames // 2)
+                self.current_state["blink_state"] = progress
+                time.sleep(frame_time)
+            
+            self.current_state["blink_state"] = 1.0
+            self.is_blinking = False
+        
+        # Run blink animation in separate thread
+        threading.Thread(target=blink_animation, daemon=True).start()
+    
+    def set_gaze_target(self, x: float, y: float, speed_multiplier: float = 1.0):
+        """
+        Thiết lập mục tiêu hướng nhìn mới
+        x, y: Tọa độ mục tiêu (-1 đến 1)
+        speed_multiplier: Hệ số tốc độ (1.0 = bình thường)
+        """
+        self.current_state["target_x"] = max(-1, min(1, x))
+        self.current_state["target_y"] = max(-1, min(1, y))
+        
+        self.stats["gaze_changes"] += 1
+        self.timing["last_gaze_change"] = time.time()
+        
+        # Adjust movement speed if needed
+        if speed_multiplier != 1.0:
+            self.eye_config["movement_smoothness"] *= speed_multiplier
+    
+    def generate_natural_gaze_pattern(self):
+        """Tạo pattern hướng nhìn tự nhiên"""
+        current_time = time.time()
+        
+        # Change gaze target periodically
+        if current_time - self.timing["last_gaze_change"] > random.uniform(4, 12):
+            # Natural looking patterns
+            patterns = [
+                # Looking around naturally
+                (random.uniform(-0.8, 0.8), random.uniform(-0.6, 0.6)),
+                # Focus on center occasionally
+                (random.uniform(-0.2, 0.2), random.uniform(-0.2, 0.2)),
+                # Look at specific areas of interest
+                (random.uniform(0.3, 0.7), random.uniform(-0.3, 0.3)),
+                (-random.uniform(0.3, 0.7), random.uniform(-0.3, 0.3)),
+            ]
+            
+            target_x, target_y = random.choice(patterns)
+            self.set_gaze_target(target_x, target_y)
+    
+    def update_attention_and_fatigue(self):
+        """Cập nhật mức độ tập trung và mệt mỏi"""
+        current_time = time.time()
+        
+        if current_time - self.timing["last_attention_change"] > 30:  # Every 30 seconds
+            # Simulate natural attention fluctuation
+            attention_change = random.uniform(-0.1, 0.1)
+            self.current_state["attention_level"] = max(0.3, min(1.0, 
+                self.current_state["attention_level"] + attention_change))
+            
+            # Gradual fatigue increase
+            fatigue_increase = random.uniform(0.001, 0.005)
+            self.current_state["fatigue_level"] = min(0.8, 
+                self.current_state["fatigue_level"] + fatigue_increase)
+            
+            self.timing["last_attention_change"] = current_time
+    
+    def update_animation_frame(self):
+        """Cập nhật một frame của animation"""
+        if not self.is_active:
+            return
+            
+        current_time = time.time()
+        
+        # Update all eye movement components
+        self.generate_smooth_movement()
+        self.update_pupil_dilation()
+        self.generate_natural_gaze_pattern()
+        self.update_attention_and_fatigue()
+        
+        # Handle natural blinking
+        blink_interval = self.calculate_natural_blink_interval()
+        if current_time - self.timing["last_blink"] > blink_interval:
+            self.trigger_natural_blink()
+            self.timing["last_blink"] = current_time
+    
+    def get_eye_data(self) -> dict:
+        """Lấy dữ liệu trạng thái mắt hiện tại"""
+        return {
+            "gaze": {
+                "x": self.current_state["gaze_x"],
+                "y": self.current_state["gaze_y"]
+            },
+            "pupil_dilation": self.current_state["pupil_dilation"],
+            "blink_state": self.current_state["blink_state"],
+            "attention_level": self.current_state["attention_level"],
+            "fatigue_level": self.current_state["fatigue_level"]
+        }
+    
+    def start_animation(self):
+        """Bắt đầu animation mắt"""
+        self.is_active = True
+        print("👁️ Eye animation started")
+    
+    def stop_animation(self):
+        """Dừng animation mắt"""
+        self.is_active = False
+        print("👁️ Eye animation stopped")
+    
+    def print_eye_stats(self):
+        """In thống kê eye movement"""
+        runtime = time.time() - self.stats["session_start"]
+        print(f"\n👁️ EYE MOVEMENT STATS:")
+        print(f"   Runtime: {runtime:.1f}s")
+        print(f"   Total blinks: {self.stats['total_blinks']}")
+        print(f"   Gaze changes: {self.stats['gaze_changes']}")
+        print(f"   Smooth movements: {self.stats['smooth_movements']}")
+        print(f"   Current attention: {self.current_state['attention_level']:.2f}")
+        print(f"   Current fatigue: {self.current_state['fatigue_level']:.2f}")
 
 def safe_import():
     """Import các thư viện cần thiết"""
@@ -60,9 +348,12 @@ def safe_import():
 
 class ImprovedTikTokBot:
     def __init__(self):
-        print("🚀 Khởi tạo TikTok Bot Improved...")
+        print("🚀 Khởi tạo TikTok Bot Improved với Eye Movement Extension...")
         
         self.modules = safe_import()
+        
+        # Initialize Eye Movement System
+        self.eye_movement = RealisticEyeMovement()
         
         # Cấu hình skip methods với độ ưu tiên
         self.skip_methods = [
@@ -598,6 +889,91 @@ class ImprovedTikTokBot:
         print(f"❌ TẤT CẢ METHODS ĐỀU THẤT BẠI sau {self.config['max_retries']} lần thử")
         return False
     
+    def test_eye_movement_system(self):
+        """Test hệ thống chuyển động mắt"""
+        print("\n👁️ TESTING EYE MOVEMENT SYSTEM")
+        print("=" * 50)
+        
+        self.eye_movement.start_animation()
+        
+        try:
+            print("🔄 Testing various eye movement patterns...")
+            
+            # Test 1: Basic gaze patterns
+            print("\n1. Testing basic gaze patterns...")
+            gaze_patterns = [
+                (0.0, 0.0),      # Center
+                (0.7, 0.0),      # Right
+                (-0.7, 0.0),     # Left  
+                (0.0, 0.5),      # Up
+                (0.0, -0.5),     # Down
+                (0.5, 0.3),      # Top-right
+                (-0.5, -0.3),    # Bottom-left
+            ]
+            
+            for i, (x, y) in enumerate(gaze_patterns):
+                print(f"   Pattern {i+1}: Gaze to ({x}, {y})")
+                self.eye_movement.set_gaze_target(x, y)
+                
+                # Simulate animation for 2 seconds
+                for _ in range(20):  # 10 FPS for 2 seconds
+                    self.eye_movement.update_animation_frame()
+                    eye_data = self.eye_movement.get_eye_data()
+                    time.sleep(0.1)
+                
+                current_gaze = eye_data['gaze']
+                print(f"   Current gaze: ({current_gaze['x']:.2f}, {current_gaze['y']:.2f})")
+            
+            # Test 2: Natural behaviors
+            print("\n2. Testing natural behaviors (10 seconds)...")
+            start_time = time.time()
+            frame_count = 0
+            
+            while time.time() - start_time < 10:
+                self.eye_movement.update_animation_frame()
+                frame_count += 1
+                
+                if frame_count % 20 == 0:  # Every 2 seconds
+                    eye_data = self.eye_movement.get_eye_data()
+                    print(f"   Frame {frame_count}: Gaze({eye_data['gaze']['x']:.2f}, {eye_data['gaze']['y']:.2f}) "
+                          f"Pupil:{eye_data['pupil_dilation']:.2f} Blink:{eye_data['blink_state']:.2f}")
+                
+                time.sleep(0.1)
+            
+            # Test 3: Forced blinks
+            print("\n3. Testing forced blinks...")
+            for i in range(3):
+                print(f"   Blink {i+1}")
+                self.eye_movement.trigger_natural_blink()
+                time.sleep(1)
+            
+            # Test 4: Attention simulation
+            print("\n4. Testing attention simulation...")
+            print("   Simulating high attention...")
+            self.eye_movement.current_state["attention_level"] = 1.0
+            self.eye_movement.set_gaze_target(0.0, 0.0)
+            
+            for _ in range(20):
+                self.eye_movement.update_animation_frame()
+                time.sleep(0.1)
+            
+            print("   Simulating low attention...")
+            self.eye_movement.current_state["attention_level"] = 0.3
+            
+            for _ in range(20):
+                self.eye_movement.update_animation_frame()
+                time.sleep(0.1)
+            
+            print("\n✅ Eye movement test completed successfully!")
+            self.eye_movement.print_eye_stats()
+            
+        except KeyboardInterrupt:
+            print("\n🛑 Test interrupted by user")
+        finally:
+            self.eye_movement.stop_animation()
+            
+        input("\nPress Enter to return to main menu...")
+
     def print_detailed_stats(self):
         """In thống kê chi tiết"""
         print("\n" + "="*60)
@@ -632,9 +1008,12 @@ class ImprovedTikTokBot:
         print("="*60)
     
     def start_monitoring(self):
-        """Bắt đầu giám sát với improved logic"""
-        print("🔍 Bắt đầu giám sát TikTok với Smart Skip Selection...")
+        """Bắt đầu giám sát với improved logic và eye movement"""
+        print("🔍 Bắt đầu giám sát TikTok với Smart Skip Selection và Realistic Eye Movement...")
         print("⚠️ Nhấn Ctrl+C để dừng")
+        
+        # Start eye movement animation
+        self.eye_movement.start_animation()
         
         cycle = 0
         consecutive_failures = 0
@@ -644,16 +1023,36 @@ class ImprovedTikTokBot:
                 cycle += 1
                 print(f"\n{'='*20} Chu kỳ #{cycle} {'='*20}")
                 
+                # Update eye movement animation
+                self.eye_movement.update_animation_frame()
+                
+                # Show current eye state every 10 cycles
+                if cycle % 10 == 0:
+                    eye_data = self.eye_movement.get_eye_data()
+                    print(f"👁️ Gaze: ({eye_data['gaze']['x']:.2f}, {eye_data['gaze']['y']:.2f}) | "
+                          f"Pupil: {eye_data['pupil_dilation']:.2f} | "
+                          f"Attention: {eye_data['attention_level']:.2f}")
+                
                 windows = self.find_tiktok_windows()
                 
                 if not windows:
                     print("⏳ Không tìm thấy TikTok...")
                     consecutive_failures += 1
                     
+                    # Update eye movement to show boredom/waiting
+                    self.eye_movement.set_gaze_target(
+                        random.uniform(-0.5, 0.5), 
+                        random.uniform(-0.3, 0.3)
+                    )
+                    
                     # Adaptive delay based on failures
                     delay = min(3 + consecutive_failures, 10)
                     print(f"⏳ Chờ {delay}s...")
-                    time.sleep(delay)
+                    
+                    # Continue eye animation during wait
+                    for _ in range(delay * 2):  # 2 updates per second
+                        self.eye_movement.update_animation_frame()
+                        time.sleep(0.5)
                     continue
                 
                 consecutive_failures = 0  # Reset counter
@@ -661,36 +1060,75 @@ class ImprovedTikTokBot:
                 for i, window in enumerate(windows):
                     print(f"\n🔍 Window {i+1}/{len(windows)}: {window.title}")
                     
+                    # Update eye movement to show attention to window
+                    window_attention_x = random.uniform(-0.3, 0.3)
+                    window_attention_y = random.uniform(-0.2, 0.2)
+                    self.eye_movement.set_gaze_target(window_attention_x, window_attention_y)
+                    
                     screenshot = self.capture_screen(window)
                     if screenshot is None:
                         print("⚠️ Không thể chụp màn hình")
+                        # Show confusion in eye movement
+                        self.eye_movement.set_gaze_target(
+                            random.uniform(-0.8, 0.8),
+                            random.uniform(-0.4, 0.4)
+                        )
                         continue
                     
                     is_live, keyword = self.detect_live_text(screenshot)
                     
                     if is_live:
                         print(f"🔴 PHÁT HIỆN LIVE! Keyword: '{keyword}'")
+                        
+                        # Show focused attention in eye movement
+                        self.eye_movement.current_state["attention_level"] = 1.0
+                        self.eye_movement.set_gaze_target(0.0, 0.0)  # Focus center
+                        
                         success = self.skip_with_smart_selection(window)
                         
                         if success:
                             print("🎉 Skip thành công!")
+                            # Show satisfaction/relief in eye movement
+                            self.eye_movement.trigger_natural_blink()
+                            self.eye_movement.set_gaze_target(
+                                random.uniform(-0.2, 0.2),
+                                random.uniform(-0.2, 0.2)
+                            )
                         else:
                             print("😞 Skip thất bại!")
+                            # Show frustration in eye movement
+                            self.eye_movement.set_gaze_target(
+                                random.uniform(-0.6, 0.6),
+                                random.uniform(-0.4, 0.4),
+                                speed_multiplier=1.5
+                            )
                     else:
                         print("✅ Không phải live")
+                        # Relaxed eye movement
+                        self.eye_movement.set_gaze_target(
+                            random.uniform(-0.4, 0.4),
+                            random.uniform(-0.3, 0.3)
+                        )
                 
                 print("⏳ Chờ 3 giây trước chu kỳ tiếp theo...")
-                time.sleep(3)
+                
+                # Continue eye animation during wait
+                for _ in range(6):  # 6 updates over 3 seconds
+                    self.eye_movement.update_animation_frame()
+                    time.sleep(0.5)
                 
         except KeyboardInterrupt:
             print("\n🛑 Dừng bot theo yêu cầu người dùng")
+            self.eye_movement.stop_animation()
             self.print_detailed_stats()
+            self.eye_movement.print_eye_stats()
 
 def main():
     """Main function"""
     print("=" * 70)
-    print("🤖 TikTok Bot - IMPROVED VERSION")
+    print("🤖 TikTok Bot - IMPROVED VERSION với EYE MOVEMENT EXTENSION")
     print("📈 Smart Skip Selection với Success Rate Tracking")
+    print("👁️  Realistic Eye Movement Animation cho Background")
     print("=" * 70)
     
     try:
@@ -700,18 +1138,22 @@ def main():
             print("\n🎯 MENU:")
             print("1. Bắt đầu giám sát")
             print("2. Xem thống kê chi tiết")
-            print("3. Cấu hình")
-            print("4. Thoát")
+            print("3. Test Eye Movement System")
+            print("4. Cấu hình")
+            print("5. Thoát")
             
-            choice = input("Chọn (1-4): ").strip()
+            choice = input("Chọn (1-5): ").strip()
             
             if choice == "1":
                 bot.start_monitoring()
             elif choice == "2":
                 bot.print_detailed_stats()
+                bot.eye_movement.print_eye_stats()
             elif choice == "3":
-                print("🔧 Cấu hình sẽ được thêm trong phiên bản tiếp theo")
+                bot.test_eye_movement_system()
             elif choice == "4":
+                print("🔧 Cấu hình sẽ được thêm trong phiên bản tiếp theo")
+            elif choice == "5":
                 print("👋 Tạm biệt!")
                 break
             else:
